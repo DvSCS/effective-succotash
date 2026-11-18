@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: futbora-stremio-addon
+    runtime: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: PORT
+        value: 7000
