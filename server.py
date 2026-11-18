@@ -12,13 +12,11 @@ from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import socketserver
 import time
-import re
 import os
 
 PORT = int(os.environ.get("PORT", 7000))
 CACHE_TTL = 60  # Cache scoreboard for 60 seconds
 
-# League identifiers for ESPN Public API
 LEAGUES = {
     "brasileirao": {
         "slug": "bra.1",
@@ -129,7 +127,7 @@ def fetch_league_events(league_slug, league_name):
     )
     matches = []
     try:
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
                 data = json.loads(response.read().decode("utf-8"))
                 events = data.get("events", [])
@@ -145,8 +143,8 @@ def fetch_league_events(league_slug, league_name):
                     competitions = ev.get("competitions", [{}])[0]
                     competitors = competitions.get("competitors", [])
                     
-                    home_team = {"name": "Mandante", "score": "0", "logo": ""}
-                    away_team = {"name": "Visitante", "score": "0", "logo": ""}
+                    home_team = {"name": "Mandante", "shortName": "MND", "score": "0", "logo": ""}
+                    away_team = {"name": "Visitante", "shortName": "VIS", "score": "0", "logo": ""}
                     
                     for comp in competitors:
                         is_home = comp.get("homeAway") == "home"
@@ -187,8 +185,7 @@ def fetch_league_events(league_slug, league_name):
                         "broadcasts": broadcasts,
                         "venue": venue
                     })
-    except Exception as e:
-        # Silently continue on individual league failures
+    except Exception:
         pass
     return matches
 
@@ -202,7 +199,7 @@ def get_all_matches():
         league_matches = fetch_league_events(info["slug"], info["name"])
         all_matches.extend(league_matches)
     
-    # If network is down or no matches currently in season, provide realistic preview fallback
+    # Fallback preview if network fails
     if not all_matches:
         all_matches = [
             {
@@ -230,58 +227,6 @@ def get_all_matches():
                 "status_detail": "2º Tempo - 72'",
                 "broadcasts": ["Globo", "Premiere"],
                 "venue": "Maracanã, Rio de Janeiro"
-            },
-            {
-                "id": "futbora_demo_rma_bar",
-                "raw_id": "demo_rma_bar",
-                "league_slug": "esp.1",
-                "league_name": "La Liga",
-                "name": "Real Madrid x Barcelona",
-                "short_name": "RMA x BAR",
-                "home": {
-                    "name": "Real Madrid",
-                    "shortName": "RMA",
-                    "score": "0",
-                    "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/86.png"
-                },
-                "away": {
-                    "name": "Barcelona",
-                    "shortName": "BAR",
-                    "score": "0",
-                    "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/83.png"
-                },
-                "date_iso": datetime.now(timezone.utc).isoformat(),
-                "time_str": "Hoje às 17:00",
-                "state": "pre",
-                "status_detail": "Agendado",
-                "broadcasts": ["ESPN", "Disney+"],
-                "venue": "Santiago Bernabéu, Madrid"
-            },
-            {
-                "id": "futbora_demo_liv_mci",
-                "raw_id": "demo_liv_mci",
-                "league_slug": "eng.1",
-                "league_name": "Premier League",
-                "name": "Liverpool x Manchester City",
-                "short_name": "LIV x MCI",
-                "home": {
-                    "name": "Liverpool",
-                    "shortName": "LIV",
-                    "score": "1",
-                    "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/364.png"
-                },
-                "away": {
-                    "name": "Manchester City",
-                    "shortName": "MCI",
-                    "score": "1",
-                    "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/382.png"
-                },
-                "date_iso": datetime.now(timezone.utc).isoformat(),
-                "time_str": "Hoje às 13:30",
-                "state": "post",
-                "status_detail": "Finalizado",
-                "broadcasts": ["ESPN", "Star+"],
-                "venue": "Anfield, Liverpool"
             }
         ]
     
@@ -289,7 +234,7 @@ def get_all_matches():
     _cache["matches"] = all_matches
     return all_matches
 
-def match_to_meta(m, host="localhost:7000"):
+def match_to_meta(m, host="localhost:7000", proto="http"):
     is_live = m["state"] == "in"
     is_post = m["state"] == "post"
     
@@ -311,11 +256,11 @@ def match_to_meta(m, host="localhost:7000"):
     if m["broadcasts"]:
         desc_lines.append(f"📺 Transmissão: {', '.join(m['broadcasts'])}")
     else:
-        desc_lines.append("📺 Transmissão: Consultar guia de TV local")
+        desc_lines.append("📺 Transmissão: Consultar guia de canais")
         
     desc_lines.append("\n⚽ FUTBora - Jogos de Futebol no seu Stremio & Nuvio.")
     
-    poster_url = f"http://{host}/poster/{m['raw_id']}.svg"
+    poster_url = f"{proto}://{host}/poster/{m['raw_id']}.svg"
     banner_url = "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1200&auto=format&fit=crop"
     
     return {
@@ -342,8 +287,8 @@ def generate_svg_poster(match):
     
     score_display = f"{home['score']} - {away['score']}" if (is_live or is_post) else "VS"
     
-    home_logo = f'<image href="{home["logo"]}" x="40" y="240" width="130" height="130" preserveAspectRatio="xMidYMid meet"/>' if home["logo"] else f'<circle cx="105" cy="305" r="50" fill="#222"/><text x="105" y="315" font-size="28" font-weight="bold" fill="#fff" text-anchor="middle">{home["shortName"]}</text>'
-    away_logo = f'<image href="{away["logo"]}" x="250" y="240" width="130" height="130" preserveAspectRatio="xMidYMid meet"/>' if away["logo"] else f'<circle cx="315" cy="305" r="50" fill="#222"/><text x="315" y="315" font-size="28" font-weight="bold" fill="#fff" text-anchor="middle">{away["shortName"]}</text>'
+    home_logo = f'<image href="{home["logo"]}" x="40" y="240" width="130" height="130" preserveAspectRatio="xMidYMid meet"/>' if home.get("logo") else f'<circle cx="105" cy="305" r="50" fill="#222"/><text x="105" y="315" font-size="28" font-weight="bold" fill="#fff" text-anchor="middle">{home["shortName"]}</text>'
+    away_logo = f'<image href="{away["logo"]}" x="250" y="240" width="130" height="130" preserveAspectRatio="xMidYMid meet"/>' if away.get("logo") else f'<circle cx="315" cy="305" r="50" fill="#222"/><text x="315" y="315" font-size="28" font-weight="bold" fill="#fff" text-anchor="middle">{away["shortName"]}</text>'
     
     venue_text = (match["venue"][:26] + "...") if len(match.get("venue", "")) > 28 else match.get("venue", "")
 
@@ -421,6 +366,14 @@ def generate_svg_poster(match):
     return svg
 
 class StremioAddonHandler(BaseHTTPRequestHandler):
+    def get_proto(self, host):
+        fwd_proto = self.headers.get("X-Forwarded-Proto")
+        if fwd_proto:
+            return fwd_proto
+        if "onrender.com" in host or "hf.space" in host or not (host.startswith("localhost") or host.startswith("127.0.0.1")):
+            return "https"
+        return "http"
+
     def send_cors_headers(self, content_type="application/json"):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -434,6 +387,7 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         host = self.headers.get("Host", f"localhost:{PORT}")
+        proto = self.get_proto(host)
         path = self.path
 
         # 1. Manifest
@@ -443,7 +397,7 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
                 "version": "1.0.0",
                 "name": "⚽ FUTBora - Jogos de Hoje",
                 "description": "Jogos de futebol do dia ao vivo e agendados: Brasileirão, La Liga, Champions, Premier League e mais, estilo Cinemeta.",
-                "logo": f"http://{host}/poster/demo_fla_pal.svg",
+                "logo": f"{proto}://{host}/poster/demo_fla_pal.svg",
                 "background": "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?q=80&w=1200&auto=format&fit=crop",
                 "types": ["tv", "movie"],
                 "resources": [
@@ -490,12 +444,10 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
                 return
 
         # 3. Catalog: /catalog/{type}/{id}.json or with extra params
-        # Format: /catalog/tv/jogos_do_dia.json or /catalog/tv/jogos_do_dia/genre=La%20Liga.json
         if path.startswith("/catalog/"):
             clean_path = path.split("?")[0]
             parts = clean_path.strip("/").split("/")
             
-            # Extract genre or search from path or query string
             genre_filter = None
             search_query = None
             
@@ -508,17 +460,15 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
             
             matches = get_all_matches()
             
-            # Apply genre filtering
             if genre_filter and genre_filter in GENRE_MAP:
                 slug_target = GENRE_MAP[genre_filter]
                 if slug_target:
                     matches = [m for m in matches if m["league_slug"] == slug_target]
             
-            # Apply search filtering
             if search_query:
                 matches = [m for m in matches if search_query in m["name"].lower() or search_query in m["league_name"].lower()]
 
-            metas = [match_to_meta(m, host=host) for m in matches]
+            metas = [match_to_meta(m, host=host, proto=proto) for m in matches]
             response_data = {"metas": metas}
             
             self.send_cors_headers("application/json; charset=utf-8")
@@ -534,7 +484,7 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
                 matches = get_all_matches()
                 match = next((m for m in matches if m["id"] == target_id), None)
                 if match:
-                    meta_obj = match_to_meta(match, host=host)
+                    meta_obj = match_to_meta(match, host=host, proto=proto)
                     self.send_cors_headers("application/json; charset=utf-8")
                     self.wfile.write(json.dumps({"meta": meta_obj}, ensure_ascii=False).encode("utf-8"))
                     return
@@ -552,16 +502,14 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
             
             streams = []
             if match:
-                # Provide informational search & transmission stream entry
                 broadcast_txt = ", ".join(match["broadcasts"]) if match["broadcasts"] else "Canais Oficiais / Premiere / ESPN"
                 streams.append({
                     "title": f"📺 {match['name']} - Transmissão: {broadcast_txt}",
                     "name": "FUTBora Info",
                     "externalUrl": f"https://www.google.com/search?q={urllib.parse.quote(match['name'] + ' onde assistir ao vivo')}"
                 })
-                # Add YouTube live search redirect for official club broadcasts (e.g. CazéTV, GE, FlaTV)
                 streams.append({
-                    "title": "🔴 Buscar Transmissão / Melhores Momentos no YouTube",
+                    "title": "🔴 Buscar no YouTube (CazéTV / Clubes)",
                     "name": "YouTube Esportes",
                     "externalUrl": f"https://www.youtube.com/results?search_query={urllib.parse.quote(match['name'] + ' ao vivo')}"
                 })
@@ -570,7 +518,6 @@ class StremioAddonHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"streams": streams}, ensure_ascii=False).encode("utf-8"))
             return
 
-        # Default fallback
         self.send_error(404, "Not Found")
 
 class ThreadingSimpleServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -583,8 +530,6 @@ def run():
     print(f"🚀 FUTBora - Addon de Futebol para Stremio & Nuvio rodando!")
     print(f"📍 Endereço local: http://localhost:{PORT}")
     print(f"🔗 URL do Manifest: http://localhost:{PORT}/manifest.json")
-    print(f"👉 No Stremio ou Nuvio, vá em 'Addons' -> 'Instalar Addon' e cole:")
-    print(f"   http://localhost:{PORT}/manifest.json")
     print("=" * 60)
     try:
         httpd.serve_forever()
